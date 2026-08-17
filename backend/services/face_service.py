@@ -14,6 +14,16 @@ from PIL import Image
 
 from backend import config
 
+# Cache global de processo: cv2.FaceDetectorYN é caro de criar (carrega o
+# modelo ONNX), então é criado uma vez e reaproveitado entre chamadas.
+#
+# NÃO é thread-safe: _obter_detector faz setInputSize(...) e quem chama faz
+# detector.detect(...) em seguida, como duas operações separadas sobre o
+# mesmo objeto cv2.FaceDetectorYN. Threads concorrentes podem intercalar
+# essas chamadas e uma thread detectar com o InputSize setado pela outra. Hoje
+# o pipeline é sequencial (uma imagem de cada vez), então isso não é um
+# problema na prática — mas vai precisar de lock (ou um detector por
+# worker/thread) quando a Etapa 4 (FastAPI) atender requisições concorrentes.
 _detector: cv2.FaceDetectorYN | None = None
 
 
@@ -63,43 +73,51 @@ def _obter_detector(largura: int, altura: int) -> cv2.FaceDetectorYN:
 def detectar_rostos(imagem: Image.Image) -> list[Rosto]:
     """Detecta rostos em uma imagem PIL e devolve caixa, confiança e landmarks de cada um."""
     imagem_bgr = cv2.cvtColor(np.array(imagem.convert("RGB")), cv2.COLOR_RGB2BGR)
-    imagem_deteccao, escala = _redimensionar_para_deteccao(imagem_bgr, config.LADO_MAXIMO_DETECCAO)
+    imagem_deteccao, escala_x, escala_y = _redimensionar_para_deteccao(imagem_bgr, config.LADO_MAXIMO_DETECCAO)
     altura, largura = imagem_deteccao.shape[:2]
     detector = _obter_detector(largura, altura)
     _, deteccoes = detector.detect(imagem_deteccao)
 
     if deteccoes is None:
         return []
-    return [_linha_para_rosto(linha, escala) for linha in deteccoes]
+    return [_linha_para_rosto(linha, escala_x, escala_y) for linha in deteccoes]
 
 
-def _redimensionar_para_deteccao(imagem_bgr: np.ndarray, lado_maximo: int) -> tuple[np.ndarray, float]:
+def _redimensionar_para_deteccao(imagem_bgr: np.ndarray, lado_maximo: int) -> tuple[np.ndarray, float, float]:
     """Reduz a imagem para no máximo `lado_maximo` px no maior lado antes de detectar.
 
     O YuNet degrada em imagens grandes; detectar numa cópia reduzida produz
-    confiança maior, e o fator de escala devolvido permite reposicionar a
-    caixa e os landmarks nas coordenadas da imagem original.
+    confiança maior. As dimensões reduzidas (nova_largura, nova_altura) são
+    arredondadas para pixel inteiro, o que desalinha ligeiramente a razão
+    largura/altura em relação à imagem original — por isso a escala efetiva
+    de cada eixo é calculada separadamente (nova_largura/largura e
+    nova_altura/altura, já pós-arredondamento) e devolvida como
+    (escala_x, escala_y), para reposicionar caixa e landmarks nas coordenadas
+    da imagem original sem herdar esse erro de arredondamento.
     """
     altura, largura = imagem_bgr.shape[:2]
     escala = min(1.0, lado_maximo / max(altura, largura))
     if escala == 1.0:
-        return imagem_bgr, 1.0
+        return imagem_bgr, 1.0, 1.0
     nova_largura = round(largura * escala)
     nova_altura = round(altura * escala)
     imagem_redimensionada = cv2.resize(imagem_bgr, (nova_largura, nova_altura), interpolation=cv2.INTER_AREA)
-    return imagem_redimensionada, escala
+    escala_x = nova_largura / largura
+    escala_y = nova_altura / altura
+    return imagem_redimensionada, escala_x, escala_y
 
 
-def _linha_para_rosto(linha: np.ndarray, escala: float) -> Rosto:
+def _linha_para_rosto(linha: np.ndarray, escala_x: float, escala_y: float) -> Rosto:
     """Converte uma linha da saída do YuNet (caixa + 5 landmarks + score) em Rosto.
 
     Ordem da saída do YuNet: x, y, largura, altura, depois 5 pares (x, y) para
     olho direito, olho esquerdo, ponta do nariz, canto direito e esquerdo da
     boca, e por fim o score de confiança. As coordenadas vêm na escala da
-    imagem passada ao detector, por isso são divididas por `escala` para
-    voltar ao tamanho original.
+    imagem passada ao detector, por isso os valores de eixo x são divididos
+    por `escala_x` e os de eixo y por `escala_y` (ver
+    _redimensionar_para_deteccao) para voltar ao tamanho original.
     """
-    valores = [float(v) / escala for v in linha[:14]]
+    valores = [float(v) / escala_x if indice % 2 == 0 else float(v) / escala_y for indice, v in enumerate(linha[:14])]
     confianca = float(linha[14])
     x, y, largura, altura = valores[0:4]
     olho_direito = (valores[4], valores[5])

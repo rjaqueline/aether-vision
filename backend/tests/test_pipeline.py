@@ -246,6 +246,56 @@ def test_pdf_corrompido_vira_item_de_erro_sem_derrubar_o_lote(tmp_path: Path, mo
     assert por_nome["empregado.jpg"].status == Status.PRONTO
 
 
+def test_falha_inesperada_em_um_item_nao_derruba_o_lote(tmp_path: Path, monkeypatch):
+    # simula uma regressão não prevista em _processar_pdf/_processar_arquivo
+    # (ex.: falha ao ler page_count, ou ao fechar o documento) — o item vira
+    # erro isolado, sem impedir que os demais arquivos do lote sejam processados
+    _criar_imagem(tmp_path / "quebra.jpg", 600, 800)
+    _criar_imagem(tmp_path / "empregado.jpg", 600, 800)
+    rosto = _rosto_valido(x=200, y=150, largura=200, altura=250)
+    monkeypatch.setattr(face_service, "detectar_rostos", lambda imagem: [rosto])
+
+    original = pipeline._processar_arquivo
+
+    def _processar_arquivo_com_falha(caminho, aprovadas, revisar, debug):
+        if caminho.name == "quebra.jpg":
+            raise RuntimeError("falha inesperada simulada")
+        return original(caminho, aprovadas, revisar, debug)
+
+    monkeypatch.setattr(pipeline, "_processar_arquivo", _processar_arquivo_com_falha)
+
+    resultados = pipeline.processar_pasta(tmp_path)
+
+    por_nome = {r.arquivo_original: r for r in resultados}
+    assert por_nome["quebra.jpg"].status == Status.ERRO
+    assert por_nome["quebra.jpg"].motivo == Motivo.FALHA_INESPERADA
+    assert por_nome["empregado.jpg"].status == Status.PRONTO
+
+
+def test_falha_ao_gerar_debug_nao_invalida_resultado_ja_salvo(tmp_path: Path, monkeypatch):
+    rosto = _rosto_valido(x=150, y=100, largura=200, altura=250)
+    monkeypatch.setattr(face_service, "detectar_rostos", lambda imagem: [rosto])
+    monkeypatch.setattr(
+        pipeline.debug_service,
+        "salvar_visualizacao",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("falha simulada ao salvar debug")),
+    )
+
+    resultado = _processar_um(tmp_path, 800, 800, lambda imagem: [rosto], monkeypatch)
+
+    assert resultado.status == Status.PRONTO
+    assert resultado.motivo == Motivo.ROSTO_VALIDO_RECORTADO
+    assert "debug" in resultado.detalhe.lower()
+
+    saida = (
+        tmp_path
+        / config.NOME_PASTA_SAIDA
+        / config.NOME_PASTA_APROVADAS
+        / resultado.arquivo_saida
+    )
+    assert saida.exists()
+
+
 def test_pdf_protegido_vira_item_de_erro(tmp_path: Path):
     documento = pymupdf.open()
     documento.new_page()

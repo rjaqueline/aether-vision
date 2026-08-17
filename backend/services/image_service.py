@@ -74,7 +74,10 @@ def redimensionar_para_saida(imagem: Image.Image) -> Image.Image:
     """Redimensiona para as dimensões finais exatas (200x267) usando LANCZOS.
 
     Único lugar que decide o tamanho final — garante por construção que toda
-    saída tem exatamente LARGURA_FINAL x ALTURA_FINAL, independente da entrada.
+    saída tem exatamente LARGURA_FINAL x ALTURA_FINAL, independente da
+    entrada. 200x267 não é um 3x4 matematicamente exato: 267 é o
+    arredondamento de 266,67 (200 / PROPORCAO_ALVO) para pixel inteiro, um
+    desvio de ~0,1% aceito deliberadamente (ver config.py).
     """
     return imagem.resize((config.LARGURA_FINAL, config.ALTURA_FINAL), _RESAMPLE_LANCZOS)
 

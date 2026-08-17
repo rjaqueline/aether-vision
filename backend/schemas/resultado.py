@@ -29,6 +29,7 @@ class Motivo(str, Enum):
     ERRO_PROCESSAMENTO = "Erro durante o processamento"
     PDF_PROTEGIDO = "PDF protegido por senha"
     PDF_CORROMPIDO = "PDF corrompido ou inválido"
+    FALHA_INESPERADA = "Falha inesperada no processamento do item"
     NENHUM = "-"
 
 
@@ -43,6 +44,9 @@ class ResultadoItem:
     largura_original: int = 0
     altura_original: int = 0
     origem: str = ""  # ex.: "página 3 (imagem embutida)" — vazio para arquivos de imagem direta
+    # Observação não-fatal sobre o item, que não altera status/motivo — ex.:
+    # falha ao gerar a imagem de depuração de um item já aprovado com sucesso.
+    detalhe: str = ""
 
     def para_linha_csv(self) -> list[str]:
         """Converte o resultado em uma lista de strings na ordem das colunas do relatório."""
@@ -54,6 +58,7 @@ class ResultadoItem:
             str(self.largura_original),
             str(self.altura_original),
             self.origem,
+            self.detalhe,
         ]
 
     @staticmethod
@@ -67,4 +72,5 @@ class ResultadoItem:
             "largura_original",
             "altura_original",
             "origem",
+            "detalhe",
         ]

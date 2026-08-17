@@ -7,8 +7,17 @@ aparecer espalhado pelos outros módulos.
 from pathlib import Path
 
 LARGURA_FINAL = 200
+# 200 / PROPORCAO_ALVO (3/4) = 266,67 — arredondado para 267 porque a saída
+# final precisa de altura em pixel inteiro. Isso faz 200x267 desviar do 3x4
+# exato em ~0,1% (200/267 = 0,74906, não 0,75). O desvio é aceito
+# deliberadamente: é imperceptível a olho nu e não compensa complicar a saída
+# com dimensões fracionárias ou um redimensionamento não-uniforme por eixo.
 ALTURA_FINAL = 267
-PROPORCAO_ALVO = 3 / 4  # largura / altura de um retrato 3x4
+# Largura/altura de um retrato 3x4, usada em valor exato (0,75) pela janela
+# de recorte (crop_service) e pela checagem "já está em 3x4" (image_service).
+# Não confundir com LARGURA_FINAL/ALTURA_FINAL: essas são as dimensões finais
+# em pixel, que arredondam para 267 e por isso desviam ~0,1% deste valor.
+PROPORCAO_ALVO = 3 / 4
 TOLERANCIA_PROPORCAO = 0.03  # desvio máximo aceito para considerar "já em 3x4"
 
 FORMATOS_IMAGEM = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}

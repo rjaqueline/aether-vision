@@ -2,8 +2,10 @@
 básica com o detector YuNet.
 """
 
+import numpy as np
 from PIL import Image
 
+from backend.services import face_service
 from backend.services.face_service import QualidadeDeteccao, Rosto, classificar_deteccao, detectar_rostos
 
 
@@ -71,3 +73,50 @@ def test_classificar_deteccao_rosto_valido():
 def test_detectar_rostos_nao_encontra_nada_em_imagem_em_branco():
     imagem = Image.new("RGB", (400, 400), (120, 60, 200))
     assert detectar_rostos(imagem) == []
+
+
+# --- escala por eixo no redimensionamento para detecção ---------------------
+
+
+def test_redimensionar_para_deteccao_calcula_escala_efetiva_por_eixo():
+    # imagem bem alongada: o arredondamento das dimensões reduzidas faz a
+    # escala efetiva do eixo x divergir nitidamente da do eixo y
+    imagem_bgr = np.zeros((3, 1801, 3), dtype=np.uint8)
+
+    redimensionada, escala_x, escala_y = face_service._redimensionar_para_deteccao(imagem_bgr, lado_maximo=800)
+
+    assert redimensionada.shape[:2] == (1, 800)  # altura, largura
+    assert escala_x == 800 / 1801
+    assert escala_y == 1 / 3
+    assert escala_x != escala_y
+
+
+def test_redimensionar_para_deteccao_nao_reduz_quando_ja_cabe():
+    imagem_bgr = np.zeros((300, 400, 3), dtype=np.uint8)
+
+    redimensionada, escala_x, escala_y = face_service._redimensionar_para_deteccao(imagem_bgr, lado_maximo=800)
+
+    assert redimensionada is imagem_bgr
+    assert (escala_x, escala_y) == (1.0, 1.0)
+
+
+def test_linha_para_rosto_usa_escala_de_cada_eixo_separadamente():
+    # x,y,largura,altura, 5 pares (x,y) de landmarks, score — todos os
+    # valores na escala da imagem reduzida
+    linha = np.array(
+        [100.0, 40.0, 60.0, 80.0, 110.0, 60.0, 150.0, 60.0, 130.0, 90.0, 115.0, 110.0, 145.0, 110.0, 0.95]
+    )
+    escala_x, escala_y = 0.5, 0.25
+
+    rosto = face_service._linha_para_rosto(linha, escala_x, escala_y)
+
+    assert rosto.x == 100.0 / escala_x
+    assert rosto.y == 40.0 / escala_y
+    assert rosto.largura == 60.0 / escala_x
+    assert rosto.altura == 80.0 / escala_y
+    assert rosto.olho_direito == (110.0 / escala_x, 60.0 / escala_y)
+    assert rosto.olho_esquerdo == (150.0 / escala_x, 60.0 / escala_y)
+    assert rosto.nariz == (130.0 / escala_x, 90.0 / escala_y)
+    assert rosto.boca_direita == (115.0 / escala_x, 110.0 / escala_y)
+    assert rosto.boca_esquerda == (145.0 / escala_x, 110.0 / escala_y)
+    assert rosto.confianca == 0.95

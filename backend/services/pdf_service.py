@@ -27,6 +27,7 @@ import pymupdf
 from PIL import Image
 
 from backend import config
+from backend.services import face_service
 
 
 class OrigemTipo(str, Enum):
@@ -42,7 +43,8 @@ class PaginaPdf:
 
     candidatas_descartadas tem sentido diferente conforme a origem: em
     IMAGEM_EMBUTIDA é quantas outras candidatas válidas perderam para a
-    escolhida (por área); em RASTERIZADA é quantas imagens embutidas existiam
+    escolhida (por rosto válido, com desempate por área — ver
+    _escolher_candidata); em RASTERIZADA é quantas imagens embutidas existiam
     na página e nenhuma passou no filtro — 0 significa que a página não tinha
     nenhuma imagem embutida. Essa distinção vai para o campo `origem` do
     relatório (ver pipeline._descrever_origem): muitas rasterizações por
@@ -98,13 +100,39 @@ def resolver_pagina(documento: pymupdf.Document, indice: int) -> PaginaPdf:
             candidatas_descartadas=total_imagens_pagina,
         )
 
-    maior = max(candidatas, key=lambda imagem: imagem.width * imagem.height)
+    escolhida = _escolher_candidata(candidatas)
     return PaginaPdf(
         numero=indice + 1,
-        imagem=maior,
+        imagem=escolhida,
         origem=OrigemTipo.IMAGEM_EMBUTIDA,
         candidatas_descartadas=len(candidatas) - 1,
     )
+
+
+def _escolher_candidata(candidatas: list[Image.Image]) -> Image.Image:
+    """Escolhe, entre as candidatas que passaram no filtro, a mais provável de ser a foto do empregado.
+
+    Escolher sempre a maior por área pode pegar um fundo ou ilustração maior
+    que a própria foto. Com mais de uma candidata, roda a detecção facial em
+    cada uma e prefere a única que tiver um rosto válido. Havendo empate
+    (mais de uma com rosto válido) ou nenhuma com rosto, não há como decidir
+    por rosto — cai de volta para a maior por área, como antes.
+    """
+    if len(candidatas) == 1:
+        return candidatas[0]
+
+    com_rosto_valido = [imagem for imagem in candidatas if _tem_rosto_valido(imagem)]
+    if len(com_rosto_valido) == 1:
+        return com_rosto_valido[0]
+
+    return max(candidatas, key=lambda imagem: imagem.width * imagem.height)
+
+
+def _tem_rosto_valido(imagem: Image.Image) -> bool:
+    """Roda a detecção facial numa candidata isolada e diz se ela tem exatamente um rosto válido."""
+    rostos = face_service.detectar_rostos(imagem)
+    qualidade = face_service.classificar_deteccao(rostos, imagem.height)
+    return qualidade == face_service.QualidadeDeteccao.ROSTO_VALIDO
 
 
 def _extrair_candidatas(documento: pymupdf.Document, pagina: pymupdf.Page) -> tuple[list[Image.Image], int]:

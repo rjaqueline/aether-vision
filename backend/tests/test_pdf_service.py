@@ -10,8 +10,25 @@ import pymupdf
 import pytest
 from PIL import Image
 
-from backend.services import pdf_service
+from backend.services import face_service, pdf_service
+from backend.services.face_service import Rosto
 from backend.services.pdf_service import OrigemTipo, PdfCorrompidoError, PdfProtegidoError
+
+
+def _rosto_valido(x=200, y=150, largura=200, altura=250) -> Rosto:
+    centro_x = x + largura / 2
+    return Rosto(
+        x=x,
+        y=y,
+        largura=largura,
+        altura=altura,
+        confianca=0.99,
+        olho_direito=(centro_x - 50, y + altura * 0.3),
+        olho_esquerdo=(centro_x + 50, y + altura * 0.3),
+        nariz=(centro_x, y + altura * 0.5),
+        boca_direita=(centro_x - 40, y + altura * 0.8),
+        boca_esquerda=(centro_x + 40, y + altura * 0.8),
+    )
 
 
 def _pagina_com_imagens(tmp_path: Path, imagens: list[Image.Image], modo_1_bit: bool = False) -> Path:
@@ -96,7 +113,9 @@ def test_resolver_pagina_rasteriza_quando_nao_ha_imagem_embutida(tmp_path: Path)
     assert pagina.imagem.height > 1000
 
 
-def test_resolver_pagina_escolhe_maior_candidata_e_registra_descartadas(tmp_path: Path):
+def test_resolver_pagina_escolhe_maior_candidata_quando_nenhuma_tem_rosto(tmp_path: Path):
+    # nem menor nem maior têm rosto (cores lisas): sem como desempatar por
+    # rosto, cai de volta para a maior por área
     menor = Image.new("RGB", (600, 800), (120, 60, 200))
     maior = Image.new("RGB", (750, 1000), (50, 150, 90))
     caminho = _pagina_com_imagens(tmp_path, [menor, maior])
@@ -109,6 +128,47 @@ def test_resolver_pagina_escolhe_maior_candidata_e_registra_descartadas(tmp_path
 
     assert pagina.origem == OrigemTipo.IMAGEM_EMBUTIDA
     assert pagina.candidatas_descartadas == 1
+    assert pagina.imagem.size == (750, 1000)
+
+
+def test_resolver_pagina_prefere_candidata_com_rosto_valido_sobre_a_maior(tmp_path: Path, monkeypatch):
+    # a foto do empregado é a menor das duas, mas tem um rosto válido — não
+    # pode perder para um fundo/ilustração maior só por causa da área
+    menor_com_rosto = Image.new("RGB", (600, 800), (120, 60, 200))
+    maior_sem_rosto = Image.new("RGB", (750, 1000), (50, 150, 90))
+    caminho = _pagina_com_imagens(tmp_path, [menor_com_rosto, maior_sem_rosto])
+
+    def deteccao_falsa(imagem):
+        return [_rosto_valido()] if imagem.size == (600, 800) else []
+
+    monkeypatch.setattr(face_service, "detectar_rostos", deteccao_falsa)
+
+    documento = pdf_service.abrir(caminho)
+    try:
+        pagina = pdf_service.resolver_pagina(documento, 0)
+    finally:
+        documento.close()
+
+    assert pagina.origem == OrigemTipo.IMAGEM_EMBUTIDA
+    assert pagina.candidatas_descartadas == 1
+    assert pagina.imagem.size == (600, 800)
+
+
+def test_resolver_pagina_usa_maior_quando_empate_de_rosto_valido(tmp_path: Path, monkeypatch):
+    # as duas candidatas têm rosto válido: sem como desempatar por rosto,
+    # cai de volta para a maior por área
+    menor = Image.new("RGB", (600, 800), (120, 60, 200))
+    maior = Image.new("RGB", (750, 1000), (50, 150, 90))
+    caminho = _pagina_com_imagens(tmp_path, [menor, maior])
+
+    monkeypatch.setattr(face_service, "detectar_rostos", lambda imagem: [_rosto_valido()])
+
+    documento = pdf_service.abrir(caminho)
+    try:
+        pagina = pdf_service.resolver_pagina(documento, 0)
+    finally:
+        documento.close()
+
     assert pagina.imagem.size == (750, 1000)
 
 

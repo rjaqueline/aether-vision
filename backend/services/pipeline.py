@@ -37,10 +37,23 @@ def processar_pasta(pasta_base: Path) -> list[ResultadoItem]:
 
     resultados = []
     for caminho in entradas:
-        if caminho.suffix.lower() in config.FORMATOS_PDF:
-            resultados.extend(_processar_pdf(caminho, aprovadas, revisar, debug))
-        else:
-            resultados.append(_processar_arquivo(caminho, aprovadas, revisar, debug))
+        try:
+            if caminho.suffix.lower() in config.FORMATOS_PDF:
+                resultados.extend(_processar_pdf(caminho, aprovadas, revisar, debug))
+            else:
+                resultados.append(_processar_arquivo(caminho, aprovadas, revisar, debug))
+        except Exception:
+            # Isolamento por item: qualquer regressão não prevista em
+            # _processar_pdf/_processar_arquivo (ex.: falha em page_count, ou
+            # ao fechar o documento) vira um item de erro em vez de derrubar
+            # o lote inteiro.
+            resultados.append(
+                ResultadoItem(
+                    arquivo_original=caminho.name,
+                    status=Status.ERRO,
+                    motivo=Motivo.FALHA_INESPERADA,
+                )
+            )
     return resultados
 
 
@@ -132,10 +145,6 @@ def _processar_imagem(
         pasta_destino = aprovadas if status == Status.PRONTO else revisar
         destino = storage.caminho_disponivel(pasta_destino, nome_saida)
         image_service.salvar_png(final, destino)
-        if info_recorte is not None:
-            rosto, janela = info_recorte
-            destino_debug = storage.caminho_disponivel(debug, nome_saida)
-            debug_service.salvar_visualizacao(imagem, rosto, janela, destino_debug)
     except Exception:
         return ResultadoItem(
             arquivo_original=arquivo_original,
@@ -146,6 +155,20 @@ def _processar_imagem(
             origem=origem,
         )
 
+    # A saída aprovada/revisar já está gravada em disco neste ponto. A
+    # imagem de debug é só um auxiliar de calibração (ver debug_service): se
+    # falhar aqui, não pode virar Status.ERRO e deixar o CSV dizendo que o
+    # item falhou enquanto o PNG aprovado continua no disco — vira apenas uma
+    # observação não-fatal em `detalhe`, o status/motivo originais são mantidos.
+    detalhe = ""
+    if info_recorte is not None:
+        rosto, janela = info_recorte
+        try:
+            destino_debug = storage.caminho_disponivel(debug, nome_saida)
+            debug_service.salvar_visualizacao(imagem, rosto, janela, destino_debug)
+        except Exception as erro:
+            detalhe = f"Falha ao gerar imagem de depuração: {erro}"
+
     return ResultadoItem(
         arquivo_original=arquivo_original,
         arquivo_saida=destino.name,
@@ -154,6 +177,7 @@ def _processar_imagem(
         largura_original=largura_original,
         altura_original=altura_original,
         origem=origem,
+        detalhe=detalhe,
     )
 
 
@@ -192,7 +216,15 @@ def _preparar_imagem_final(imagem: Image.Image) -> tuple[Status, Motivo, Image.I
 
 
 def _imagem_para_revisao(imagem: Image.Image, ja_em_3x4: bool) -> Image.Image:
-    """Prepara a imagem enviada para revisão: sem rosto válido, usa recorte central como fallback."""
+    """Prepara a imagem enviada para revisão: sem rosto válido, usa recorte central como fallback.
+
+    ja_em_3x4 só decide o que aparece nesta miniatura de revisão manual —
+    pular o recorte central quando a entrada já é 3x4, em vez de aplicá-lo
+    sem necessidade. Não afeta status/motivo (já decididos pela detecção
+    facial antes de chegar aqui) nem qualquer caminho de aprovação: uma
+    imagem aprovada (Status.PRONTO) é sempre recortada guiada pelo rosto,
+    nunca por caixa_central_3x4/ja_esta_em_3x4.
+    """
     if ja_em_3x4:
         return image_service.redimensionar_para_saida(imagem)
     caixa = image_service.caixa_central_3x4(imagem.width, imagem.height)
