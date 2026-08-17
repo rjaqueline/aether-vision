@@ -1,3 +1,4 @@
-opencv-python
-Pillow
-numpy
+pillow>=12.3.0
+pytest>=9.1.1
+opencv-python-headless>=4.10.0
+numpy>=1.26

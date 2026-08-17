@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+Vision_Processadas/
+*.png
+*.jpg
