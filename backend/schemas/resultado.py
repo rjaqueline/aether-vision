@@ -27,12 +27,14 @@ class Motivo(str, Enum):
     ARQUIVO_INVALIDO = "Arquivo não é uma imagem válida"
     ERRO_LEITURA = "Erro ao ler o arquivo"
     ERRO_PROCESSAMENTO = "Erro durante o processamento"
+    PDF_PROTEGIDO = "PDF protegido por senha"
+    PDF_CORROMPIDO = "PDF corrompido ou inválido"
     NENHUM = "-"
 
 
 @dataclass
 class ResultadoItem:
-    """Resultado do processamento de um único arquivo, pronto para virar linha de CSV."""
+    """Resultado do processamento de um único arquivo (ou página de PDF), pronto para virar linha de CSV."""
 
     arquivo_original: str
     status: Status
@@ -40,6 +42,7 @@ class ResultadoItem:
     arquivo_saida: str = ""
     largura_original: int = 0
     altura_original: int = 0
+    origem: str = ""  # ex.: "página 3 (imagem embutida)" — vazio para arquivos de imagem direta
 
     def para_linha_csv(self) -> list[str]:
         """Converte o resultado em uma lista de strings na ordem das colunas do relatório."""
@@ -50,6 +53,7 @@ class ResultadoItem:
             self.motivo.value,
             str(self.largura_original),
             str(self.altura_original),
+            self.origem,
         ]
 
     @staticmethod
@@ -62,4 +66,5 @@ class ResultadoItem:
             "motivo",
             "largura_original",
             "altura_original",
+            "origem",
         ]

@@ -4,14 +4,21 @@ Toda imagem passa pela detecção facial — inclusive as que já estão em 3x4.
 Só é aprovada quem tiver exatamente um rosto válido, e toda aprovação passa
 pelo recorte guiado pela face: a proporção original da entrada nunca decide
 nada, nem aprovação nem se o recorte é pulado.
+
+PDFs viram uma imagem por página (ver pdf_service): cada página é um
+ResultadoItem independente, com `origem` registrando de onde veio a imagem
+("página N (imagem embutida)" ou "página N (rasterizada)") e o nome do
+arquivo de saída incluindo o número da página.
 """
 
 from pathlib import Path
 
+import pymupdf
 from PIL import Image
 
+from backend import config
 from backend.schemas.resultado import Motivo, ResultadoItem, Status
-from backend.services import crop_service, debug_service, face_service, image_service, storage
+from backend.services import crop_service, debug_service, face_service, image_service, pdf_service, storage
 from backend.services.crop_service import JanelaRecorte, ResultadoRecorte
 from backend.services.face_service import QualidadeDeteccao, Rosto
 
@@ -24,14 +31,21 @@ _MOTIVO_POR_QUALIDADE = {
 
 
 def processar_pasta(pasta_base: Path) -> list[ResultadoItem]:
-    """Processa todas as imagens elegíveis de pasta_base e retorna os resultados."""
+    """Processa todas as imagens e PDFs elegíveis de pasta_base e retorna os resultados."""
     aprovadas, revisar, debug = storage.preparar_saida(pasta_base)
     entradas = storage.listar_entradas(pasta_base)
-    return [_processar_arquivo(caminho, aprovadas, revisar, debug) for caminho in entradas]
+
+    resultados = []
+    for caminho in entradas:
+        if caminho.suffix.lower() in config.FORMATOS_PDF:
+            resultados.extend(_processar_pdf(caminho, aprovadas, revisar, debug))
+        else:
+            resultados.append(_processar_arquivo(caminho, aprovadas, revisar, debug))
+    return resultados
 
 
 def _processar_arquivo(caminho: Path, aprovadas: Path, revisar: Path, debug: Path) -> ResultadoItem:
-    """Processa um único arquivo, isolando qualquer erro para não interromper o lote."""
+    """Processa um único arquivo de imagem, isolando qualquer erro para não interromper o lote."""
     try:
         imagem = image_service.abrir_normalizada(caminho)
     except Exception:
@@ -41,8 +55,77 @@ def _processar_arquivo(caminho: Path, aprovadas: Path, revisar: Path, debug: Pat
             motivo=Motivo.ERRO_LEITURA,
         )
 
-    largura_original, altura_original = imagem.width, imagem.height
     nome_saida = f"{caminho.stem}.png"
+    return _processar_imagem(caminho.name, imagem, nome_saida, "", aprovadas, revisar, debug)
+
+
+def _processar_pdf(caminho: Path, aprovadas: Path, revisar: Path, debug: Path) -> list[ResultadoItem]:
+    """Processa todas as páginas de um PDF, cada uma virando um ResultadoItem independente."""
+    try:
+        documento = pdf_service.abrir(caminho)
+    except pdf_service.PdfProtegidoError:
+        return [ResultadoItem(arquivo_original=caminho.name, status=Status.ERRO, motivo=Motivo.PDF_PROTEGIDO)]
+    except pdf_service.PdfCorrompidoError:
+        return [ResultadoItem(arquivo_original=caminho.name, status=Status.ERRO, motivo=Motivo.PDF_CORROMPIDO)]
+
+    try:
+        return [
+            _processar_pagina_pdf(caminho, documento, indice, aprovadas, revisar, debug)
+            for indice in range(documento.page_count)
+        ]
+    finally:
+        documento.close()
+
+
+def _processar_pagina_pdf(
+    caminho: Path, documento: pymupdf.Document, indice: int, aprovadas: Path, revisar: Path, debug: Path
+) -> ResultadoItem:
+    """Resolve e processa uma única página de PDF, isolando qualquer erro para não travar as demais."""
+    numero = indice + 1
+    try:
+        pagina = pdf_service.resolver_pagina(documento, indice)
+    except Exception:
+        return ResultadoItem(
+            arquivo_original=caminho.name,
+            status=Status.ERRO,
+            motivo=Motivo.ERRO_PROCESSAMENTO,
+            origem=f"página {numero}",
+        )
+
+    nome_saida = f"{caminho.stem}_pagina_{numero:02d}.png"
+    origem = _descrever_origem(numero, pagina.origem, pagina.candidatas_descartadas)
+    return _processar_imagem(caminho.name, pagina.imagem, nome_saida, origem, aprovadas, revisar, debug)
+
+
+def _descrever_origem(numero: int, origem: pdf_service.OrigemTipo, candidatas_descartadas: int) -> str:
+    """Monta a string de rastreabilidade que aparece na coluna `origem` do relatório.
+
+    Para páginas rasterizadas, distingue "nenhuma imagem embutida" de "tinha
+    imagem embutida, mas o filtro descartou todas" — essa segunda situação é
+    o sinal de alerta: se aparecer muito em produção, os filtros de
+    área/proporção (ver pdf_service) estão calibrados errado para os PDFs
+    reais, não é um scan de verdade.
+    """
+    if origem == pdf_service.OrigemTipo.RASTERIZADA:
+        if candidatas_descartadas == 0:
+            return f"página {numero} (rasterizada — nenhuma candidata válida)"
+        return f"página {numero} (rasterizada — {candidatas_descartadas} candidata(s) descartada(s) por filtro)"
+    if candidatas_descartadas > 0:
+        return f"página {numero} (imagem embutida, {candidatas_descartadas} candidata(s) descartada(s))"
+    return f"página {numero} (imagem embutida)"
+
+
+def _processar_imagem(
+    arquivo_original: str,
+    imagem: Image.Image,
+    nome_saida: str,
+    origem: str,
+    aprovadas: Path,
+    revisar: Path,
+    debug: Path,
+) -> ResultadoItem:
+    """Leva uma imagem já aberta (de arquivo direto ou de página de PDF) até o resultado final."""
+    largura_original, altura_original = imagem.width, imagem.height
 
     try:
         status, motivo, final, info_recorte = _preparar_imagem_final(imagem)
@@ -55,20 +138,22 @@ def _processar_arquivo(caminho: Path, aprovadas: Path, revisar: Path, debug: Pat
             debug_service.salvar_visualizacao(imagem, rosto, janela, destino_debug)
     except Exception:
         return ResultadoItem(
-            arquivo_original=caminho.name,
+            arquivo_original=arquivo_original,
             status=Status.ERRO,
             motivo=Motivo.ERRO_PROCESSAMENTO,
             largura_original=largura_original,
             altura_original=altura_original,
+            origem=origem,
         )
 
     return ResultadoItem(
-        arquivo_original=caminho.name,
+        arquivo_original=arquivo_original,
         arquivo_saida=destino.name,
         status=status,
         motivo=motivo,
         largura_original=largura_original,
         altura_original=altura_original,
+        origem=origem,
     )
 
 

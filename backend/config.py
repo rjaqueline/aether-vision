@@ -57,6 +57,20 @@ ALTURA_MINIMA_ROSTO = 0.15
 # antes de classificar o rosto como "lateral" (fora de frente).
 ASSIMETRIA_MAXIMA_ROSTO_LATERAL = 0.4
 
+# --- extração de fotos de PDF (pdf_service) --------------------------------
+
+FORMATOS_PDF = {".pdf"}
+
+# Resolução da rasterização de página inteira, usada quando não sobra
+# nenhuma imagem embutida aproveitável (caso do PDF escaneado).
+DPI_RASTERIZACAO_PDF = 200
+
+# Filtros para descartar imagens embutidas que claramente não são foto de
+# empregado (logos, ícones, assinaturas, cabeçalhos, rodapés, carimbos).
+AREA_MINIMA_CANDIDATA_PDF = 10_000  # px²
+PROPORCAO_MINIMA_CANDIDATA_PDF = 0.4  # largura/altura
+PROPORCAO_MAXIMA_CANDIDATA_PDF = 1.6
+
 NOME_PASTA_SAIDA = "Vision_Processadas"
 NOME_PASTA_APROVADAS = "aprovadas"
 NOME_PASTA_REVISAR = "revisar"

@@ -18,11 +18,12 @@ def preparar_saida(pasta_base: Path) -> tuple[Path, Path, Path]:
 
 
 def listar_entradas(pasta_base: Path) -> list[Path]:
-    """Lista os arquivos de imagem elegíveis em pasta_base, ignorando a própria pasta de saída.
+    """Lista os arquivos de imagem e PDF elegíveis em pasta_base, ignorando a própria pasta de saída.
 
     Nunca varre subpastas: o Vision só deve tocar no que o usuário escolheu
     explicitamente (ver config.VARRER_SUBPASTAS).
     """
+    formatos_aceitos = config.FORMATOS_IMAGEM | config.FORMATOS_PDF
     pasta_saida = (pasta_base / config.NOME_PASTA_SAIDA).resolve()
     candidatos = pasta_base.rglob("*") if config.VARRER_SUBPASTAS else pasta_base.glob("*")
 
@@ -30,7 +31,7 @@ def listar_entradas(pasta_base: Path) -> list[Path]:
     for caminho in candidatos:
         if not caminho.is_file():
             continue
-        if caminho.suffix.lower() not in config.FORMATOS_IMAGEM:
+        if caminho.suffix.lower() not in formatos_aceitos:
             continue
         caminho_resolvido = caminho.resolve()
         if caminho_resolvido == pasta_saida or pasta_saida in caminho_resolvido.parents:
