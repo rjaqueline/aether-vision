@@ -296,6 +296,95 @@ def test_falha_ao_gerar_debug_nao_invalida_resultado_ja_salvo(tmp_path: Path, mo
     assert saida.exists()
 
 
+# --- callback de progresso (on_item_processado) ------------------------------
+
+
+def test_sem_callback_comportamento_identico_ao_de_hoje(tmp_path: Path, monkeypatch):
+    _criar_imagem(tmp_path / "empregado.jpg", 600, 800)
+    rosto = _rosto_valido(x=200, y=150, largura=200, altura=250)
+    monkeypatch.setattr(face_service, "detectar_rostos", lambda imagem: [rosto])
+
+    resultados = pipeline.processar_pasta(tmp_path)
+
+    assert len(resultados) == 1
+    assert resultados[0].status == Status.PRONTO
+
+
+def test_callback_recebe_item_resolvido_e_progresso_por_arquivo(tmp_path: Path, monkeypatch):
+    _criar_imagem(tmp_path / "a_empregado1.jpg", 600, 800)
+    _criar_imagem(tmp_path / "b_empregado2.jpg", 600, 800)
+    rosto = _rosto_valido(x=200, y=150, largura=200, altura=250)
+    monkeypatch.setattr(face_service, "detectar_rostos", lambda imagem: [rosto])
+
+    chamadas = []
+    resultados = pipeline.processar_pasta(
+        tmp_path,
+        on_item_processado=lambda item, indice, total, numero_pagina: chamadas.append(
+            (item, indice, total, numero_pagina)
+        ),
+    )
+
+    assert len(chamadas) == 2
+    for (item_callback, indice, total, numero_pagina), item_resultado in zip(chamadas, resultados):
+        # o item já deve estar completamente resolvido: arquivo salvo (arquivo_saida
+        # preenchido) e o mesmo objeto/status que acaba em processar_pasta
+        assert item_callback is item_resultado
+        assert item_callback.arquivo_saida != ""
+        assert item_callback.status == Status.PRONTO
+        assert total == 2
+        assert numero_pagina is None  # arquivo de imagem direto, não página de PDF
+    assert [indice for _, indice, _, _ in chamadas] == [1, 2]
+
+
+def test_callback_notifica_cada_pagina_de_pdf_individualmente(tmp_path: Path, monkeypatch):
+    documento = pymupdf.open()
+    for _ in range(3):
+        pagina = documento.new_page(width=595, height=842)
+        buffer = io.BytesIO()
+        Image.new("RGB", (600, 800), (120, 60, 200)).save(buffer, format="PNG")
+        pagina.insert_image(pymupdf.Rect(50, 50, 300, 300), stream=buffer.getvalue())
+    caminho = tmp_path / "lote.pdf"
+    documento.save(caminho)
+    documento.close()
+
+    rosto = _rosto_valido(x=200, y=150, largura=200, altura=250)
+    monkeypatch.setattr(face_service, "detectar_rostos", lambda imagem: [rosto])
+
+    chamadas = []
+    pipeline.processar_pasta(
+        tmp_path,
+        on_item_processado=lambda item, indice, total, numero_pagina: chamadas.append(
+            (item.origem, indice, total, numero_pagina)
+        ),
+    )
+
+    # as 3 páginas do único arquivo de entrada notificam individualmente,
+    # todas com indice_arquivo=1 de total_arquivos=1 (um PDF = um arquivo de entrada),
+    # e numero_pagina 1-based identifica de forma estável qual página é qual
+    assert [origem for origem, _, _, _ in chamadas] == [
+        "página 1 (imagem embutida)",
+        "página 2 (imagem embutida)",
+        "página 3 (imagem embutida)",
+    ]
+    assert all((indice, total) == (1, 1) for _, indice, total, _ in chamadas)
+    assert [numero_pagina for _, _, _, numero_pagina in chamadas] == [1, 2, 3]
+
+
+def test_callback_com_falha_nao_interrompe_o_lote(tmp_path: Path, monkeypatch):
+    _criar_imagem(tmp_path / "a_empregado1.jpg", 600, 800)
+    _criar_imagem(tmp_path / "b_empregado2.jpg", 600, 800)
+    rosto = _rosto_valido(x=200, y=150, largura=200, altura=250)
+    monkeypatch.setattr(face_service, "detectar_rostos", lambda imagem: [rosto])
+
+    def callback_com_falha(item, indice, total, numero_pagina):
+        raise RuntimeError("callback quebrado")
+
+    resultados = pipeline.processar_pasta(tmp_path, on_item_processado=callback_com_falha)
+
+    assert len(resultados) == 2
+    assert all(r.status == Status.PRONTO for r in resultados)
+
+
 def test_pdf_protegido_vira_item_de_erro(tmp_path: Path):
     documento = pymupdf.open()
     documento.new_page()

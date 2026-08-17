@@ -5,6 +5,7 @@ classifica a qualidade da detecção nos casos que o pipeline usa para decidir
 entre aprovação direta e revisão manual.
 """
 
+import threading
 from dataclasses import dataclass
 from enum import Enum
 
@@ -17,14 +18,21 @@ from backend import config
 # Cache global de processo: cv2.FaceDetectorYN é caro de criar (carrega o
 # modelo ONNX), então é criado uma vez e reaproveitado entre chamadas.
 #
-# NÃO é thread-safe: _obter_detector faz setInputSize(...) e quem chama faz
-# detector.detect(...) em seguida, como duas operações separadas sobre o
-# mesmo objeto cv2.FaceDetectorYN. Threads concorrentes podem intercalar
-# essas chamadas e uma thread detectar com o InputSize setado pela outra. Hoje
-# o pipeline é sequencial (uma imagem de cada vez), então isso não é um
-# problema na prática — mas vai precisar de lock (ou um detector por
-# worker/thread) quando a Etapa 4 (FastAPI) atender requisições concorrentes.
+# NÃO é thread-safe por conta própria: _obter_detector faz setInputSize(...)
+# e quem chama faz detector.detect(...) em seguida, como duas operações
+# separadas sobre o mesmo objeto cv2.FaceDetectorYN. Threads concorrentes
+# podem intercalar essas chamadas e uma thread detectar com o InputSize
+# setado pela outra. Isso era só uma anotação enquanto o pipeline era
+# sequencial (CLI); virou risco real na Etapa 4, com o FastAPI atendendo
+# requisições concorrentes — por isso _detector_lock serializa o par
+# setInputSize+detect (ver detectar_rostos) em vez de dar um detector por
+# thread: o modelo ONNX carregado é o mesmo custo caro de _obter_detector
+# citado acima, e duplicá-lo por worker gastaria memória sem necessidade
+# real, já que este é um app local de usuário único (poucas sessões
+# concorrentes, não um servidor de alto tráfego) — serializar a detecção
+# em si é uma perda de paralelismo aceitável nesse cenário.
 _detector: cv2.FaceDetectorYN | None = None
+_detector_lock = threading.Lock()
 
 
 @dataclass
@@ -75,8 +83,14 @@ def detectar_rostos(imagem: Image.Image) -> list[Rosto]:
     imagem_bgr = cv2.cvtColor(np.array(imagem.convert("RGB")), cv2.COLOR_RGB2BGR)
     imagem_deteccao, escala_x, escala_y = _redimensionar_para_deteccao(imagem_bgr, config.LADO_MAXIMO_DETECCAO)
     altura, largura = imagem_deteccao.shape[:2]
-    detector = _obter_detector(largura, altura)
-    _, deteccoes = detector.detect(imagem_deteccao)
+
+    # setInputSize (dentro de _obter_detector) e detect formam uma seção
+    # crítica: são duas chamadas separadas sobre o mesmo cv2.FaceDetectorYN
+    # cacheado globalmente, e precisam executar como uma unidade atômica
+    # mesmo com requisições concorrentes (ver comentário em _detector acima).
+    with _detector_lock:
+        detector = _obter_detector(largura, altura)
+        _, deteccoes = detector.detect(imagem_deteccao)
 
     if deteccoes is None:
         return []

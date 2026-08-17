@@ -135,6 +135,31 @@ def _tem_rosto_valido(imagem: Image.Image) -> bool:
     return qualidade == face_service.QualidadeDeteccao.ROSTO_VALIDO
 
 
+@dataclass
+class InfoPagina:
+    """Contagem de candidatas de uma página, sem resolver a imagem final (ver inspecionar_paginas)."""
+
+    numero: int  # 1-based
+    total_candidatas: int
+
+
+def inspecionar_paginas(documento: pymupdf.Document) -> list[InfoPagina]:
+    """Conta, por página, quantas candidatas a foto passaram no filtro — sem rasterizar nem escolher a candidata final.
+
+    Usado pela API (ver backend/services/sessao_service.py) para dar
+    feedback imediato no upload de um PDF ("esta página tem N candidatas"),
+    antes do processamento de fato rodar via pipeline.processar_pasta —
+    resolver_pagina (que rasteriza e roda detecção facial para escolher
+    entre candidatas) só entra em ação depois, no processamento real.
+    """
+    infos = []
+    for indice in range(documento.page_count):
+        pagina = documento[indice]
+        candidatas, _ = _extrair_candidatas(documento, pagina)
+        infos.append(InfoPagina(numero=indice + 1, total_candidatas=len(candidatas)))
+    return infos
+
+
 def _extrair_candidatas(documento: pymupdf.Document, pagina: pymupdf.Page) -> tuple[list[Image.Image], int]:
     """Extrai as imagens embutidas da página e descarta as que não parecem foto de empregado.
 

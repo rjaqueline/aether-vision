@@ -11,7 +11,9 @@ ResultadoItem independente, com `origem` registrando de onde veio a imagem
 arquivo de saída incluindo o número da página.
 """
 
+import logging
 from pathlib import Path
+from typing import Callable
 
 import pymupdf
 from PIL import Image
@@ -22,6 +24,20 @@ from backend.services import crop_service, debug_service, face_service, image_se
 from backend.services.crop_service import JanelaRecorte, ResultadoRecorte
 from backend.services.face_service import QualidadeDeteccao, Rosto
 
+_logger = logging.getLogger(__name__)
+
+# Chamado depois de um item (arquivo de imagem ou página de PDF) estar
+# completamente resolvido — arquivo já salvo em disco, ResultadoItem já
+# montado — com (item, indice_arquivo, total_arquivos, numero_pagina).
+# numero_pagina é 1-based e vem do laço de páginas que o pipeline está
+# processando agora mesmo (não de uma contagem prévia); é None para arquivo
+# de imagem direto. Junto com item.arquivo_original, dá a quem chama uma
+# chave estável — (arquivo_original, numero_pagina) — para correlacionar
+# este resultado a algo que ela mesma tenha pré-registrado antes de chamar
+# processar_pasta, sem depender da ordem de chegada das notificações (ver
+# backend/services/sessao_service.py).
+_CallbackProgresso = Callable[[ResultadoItem, int, int, int | None], None]
+
 _MOTIVO_POR_QUALIDADE = {
     QualidadeDeteccao.NENHUM_ROSTO: Motivo.NENHUM_ROSTO,
     QualidadeDeteccao.MULTIPLOS_ROSTOS: Motivo.MULTIPLOS_ROSTOS,
@@ -30,31 +46,74 @@ _MOTIVO_POR_QUALIDADE = {
 }
 
 
-def processar_pasta(pasta_base: Path) -> list[ResultadoItem]:
-    """Processa todas as imagens e PDFs elegíveis de pasta_base e retorna os resultados."""
+def processar_pasta(
+    pasta_base: Path,
+    on_item_processado: _CallbackProgresso | None = None,
+) -> list[ResultadoItem]:
+    """Processa todas as imagens e PDFs elegíveis de pasta_base e retorna os resultados.
+
+    on_item_processado é opcional (default None não muda em nada o
+    comportamento de hoje) e, se informado, é chamado a cada item já
+    completamente resolvido — ver _CallbackProgresso. indice_arquivo/
+    total_arquivos contam arquivos de entrada, não páginas de PDF: para um
+    PDF de várias páginas, todos os itens daquele arquivo compartilham o
+    mesmo (indice_arquivo, total_arquivos), porque descobrir o total de
+    páginas de antemão exigiria abrir todo PDF antes de começar a processar
+    o lote — o que esta função evita. numero_pagina (1-based, None fora de
+    PDF) é a chave estável para quem chama correlacionar o resultado a algo
+    pré-registrado antes do processamento começar.
+    """
     aprovadas, revisar, debug = storage.preparar_saida(pasta_base)
     entradas = storage.listar_entradas(pasta_base)
+    total_arquivos = len(entradas)
 
     resultados = []
-    for caminho in entradas:
+    for indice_arquivo, caminho in enumerate(entradas, start=1):
         try:
             if caminho.suffix.lower() in config.FORMATOS_PDF:
-                resultados.extend(_processar_pdf(caminho, aprovadas, revisar, debug))
+                resultados.extend(
+                    _processar_pdf(
+                        caminho, aprovadas, revisar, debug, on_item_processado, indice_arquivo, total_arquivos
+                    )
+                )
             else:
-                resultados.append(_processar_arquivo(caminho, aprovadas, revisar, debug))
+                item = _processar_arquivo(caminho, aprovadas, revisar, debug)
+                _chamar_callback(on_item_processado, item, indice_arquivo, total_arquivos, None)
+                resultados.append(item)
         except Exception:
             # Isolamento por item: qualquer regressão não prevista em
             # _processar_pdf/_processar_arquivo (ex.: falha em page_count, ou
             # ao fechar o documento) vira um item de erro em vez de derrubar
             # o lote inteiro.
-            resultados.append(
-                ResultadoItem(
-                    arquivo_original=caminho.name,
-                    status=Status.ERRO,
-                    motivo=Motivo.FALHA_INESPERADA,
-                )
+            item = ResultadoItem(
+                arquivo_original=caminho.name,
+                status=Status.ERRO,
+                motivo=Motivo.FALHA_INESPERADA,
             )
+            _chamar_callback(on_item_processado, item, indice_arquivo, total_arquivos, None)
+            resultados.append(item)
     return resultados
+
+
+def _chamar_callback(
+    on_item_processado: _CallbackProgresso | None,
+    item: ResultadoItem,
+    indice_arquivo: int,
+    total_arquivos: int,
+    numero_pagina: int | None,
+) -> None:
+    """Invoca o callback de progresso, se houver, sem deixar uma falha nele afetar o lote.
+
+    O callback é um observador (ex.: atualizar o status de uma sessão da
+    API), não um participante do processamento — uma exceção nele é
+    registrada e engolida, nunca propaga.
+    """
+    if on_item_processado is None:
+        return
+    try:
+        on_item_processado(item, indice_arquivo, total_arquivos, numero_pagina)
+    except Exception:
+        _logger.exception("Callback de progresso falhou para o item %r", item.arquivo_original)
 
 
 def _processar_arquivo(caminho: Path, aprovadas: Path, revisar: Path, debug: Path) -> ResultadoItem:
@@ -72,20 +131,39 @@ def _processar_arquivo(caminho: Path, aprovadas: Path, revisar: Path, debug: Pat
     return _processar_imagem(caminho.name, imagem, nome_saida, "", aprovadas, revisar, debug)
 
 
-def _processar_pdf(caminho: Path, aprovadas: Path, revisar: Path, debug: Path) -> list[ResultadoItem]:
-    """Processa todas as páginas de um PDF, cada uma virando um ResultadoItem independente."""
+def _processar_pdf(
+    caminho: Path,
+    aprovadas: Path,
+    revisar: Path,
+    debug: Path,
+    on_item_processado: _CallbackProgresso | None,
+    indice_arquivo: int,
+    total_arquivos: int,
+) -> list[ResultadoItem]:
+    """Processa todas as páginas de um PDF, cada uma virando um ResultadoItem independente.
+
+    Notifica on_item_processado por página, assim que cada uma termina — não
+    espera o PDF inteiro para notificar, senão um PDF de muitas páginas
+    ficaria "parado" no progresso até a última página terminar.
+    """
     try:
         documento = pdf_service.abrir(caminho)
     except pdf_service.PdfProtegidoError:
-        return [ResultadoItem(arquivo_original=caminho.name, status=Status.ERRO, motivo=Motivo.PDF_PROTEGIDO)]
+        item = ResultadoItem(arquivo_original=caminho.name, status=Status.ERRO, motivo=Motivo.PDF_PROTEGIDO)
+        _chamar_callback(on_item_processado, item, indice_arquivo, total_arquivos, None)
+        return [item]
     except pdf_service.PdfCorrompidoError:
-        return [ResultadoItem(arquivo_original=caminho.name, status=Status.ERRO, motivo=Motivo.PDF_CORROMPIDO)]
+        item = ResultadoItem(arquivo_original=caminho.name, status=Status.ERRO, motivo=Motivo.PDF_CORROMPIDO)
+        _chamar_callback(on_item_processado, item, indice_arquivo, total_arquivos, None)
+        return [item]
 
     try:
-        return [
-            _processar_pagina_pdf(caminho, documento, indice, aprovadas, revisar, debug)
-            for indice in range(documento.page_count)
-        ]
+        itens = []
+        for indice in range(documento.page_count):
+            item = _processar_pagina_pdf(caminho, documento, indice, aprovadas, revisar, debug)
+            _chamar_callback(on_item_processado, item, indice_arquivo, total_arquivos, indice + 1)
+            itens.append(item)
+        return itens
     finally:
         documento.close()
 
