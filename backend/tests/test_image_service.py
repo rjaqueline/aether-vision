@@ -16,6 +16,11 @@ def _criar_imagem(caminho: Path, largura: int, altura: int, cor=(120, 60, 200)) 
     Image.new("RGB", (largura, altura), cor).save(caminho)
 
 
+def _pasta_saida(pasta_base: Path) -> Path:
+    """Localiza a pasta de saída (com timestamp) criada por um processar_pasta anterior em pasta_base."""
+    return next(pasta_base.glob(f"{config.PREFIXO_PASTA_SAIDA}_*"))
+
+
 # --- proporção ---------------------------------------------------------
 
 
@@ -106,8 +111,9 @@ def test_listar_entradas_nao_varre_subpastas(tmp_path: Path):
 
 def test_listar_entradas_ignora_pasta_de_saida(tmp_path: Path):
     _criar_imagem(tmp_path / "raiz.jpg", 300, 400)
-    storage.preparar_saida(tmp_path)
-    _criar_imagem(tmp_path / config.NOME_PASTA_SAIDA / config.NOME_PASTA_APROVADAS / "ja_processada.png", 200, 267)
+    pasta_saida = tmp_path / storage.nome_pasta_saida()
+    storage.preparar_saida(pasta_saida)
+    _criar_imagem(pasta_saida / config.NOME_PASTA_APROVADAS / "ja_processada.png", 200, 267)
 
     entradas = storage.listar_entradas(tmp_path)
 
@@ -141,7 +147,7 @@ def test_processar_pasta_aprova_imagem_ja_em_3x4_com_rosto_valido(tmp_path: Path
     resultados = pipeline.processar_pasta(tmp_path)
 
     assert resultados[0].motivo == Motivo.ROSTO_VALIDO_RECORTADO
-    saida = tmp_path / config.NOME_PASTA_SAIDA / config.NOME_PASTA_APROVADAS / "empregado.png"
+    saida = _pasta_saida(tmp_path) / config.NOME_PASTA_APROVADAS / "empregado.png"
     assert saida.exists()
     with Image.open(saida) as imagem:
         assert imagem.size == (config.LARGURA_FINAL, config.ALTURA_FINAL)
@@ -152,7 +158,7 @@ def test_processar_pasta_manda_para_revisar_quando_sem_rosto_mesmo_em_3x4(tmp_pa
 
     pipeline.processar_pasta(tmp_path)
 
-    saida = tmp_path / config.NOME_PASTA_SAIDA / config.NOME_PASTA_REVISAR / "empregado.png"
+    saida = _pasta_saida(tmp_path) / config.NOME_PASTA_REVISAR / "empregado.png"
     assert saida.exists()
 
 
@@ -161,7 +167,7 @@ def test_processar_pasta_manda_para_revisar_quando_fora_de_3x4(tmp_path: Path):
 
     pipeline.processar_pasta(tmp_path)
 
-    saida = tmp_path / config.NOME_PASTA_SAIDA / config.NOME_PASTA_REVISAR / "empregado.png"
+    saida = _pasta_saida(tmp_path) / config.NOME_PASTA_REVISAR / "empregado.png"
     assert saida.exists()
     with Image.open(saida) as imagem:
         assert imagem.size == (config.LARGURA_FINAL, config.ALTURA_FINAL)
@@ -178,7 +184,7 @@ def test_processar_pasta_gera_nomes_unicos_para_arquivos_repetidos(tmp_path: Pat
     pipeline.processar_pasta(tmp_path)
 
     # simula um segundo arquivo que resultaria no mesmo nome de saída
-    pasta_aprovadas = tmp_path / config.NOME_PASTA_SAIDA / config.NOME_PASTA_APROVADAS
+    pasta_aprovadas = _pasta_saida(tmp_path) / config.NOME_PASTA_APROVADAS
     destino = storage.caminho_disponivel(pasta_aprovadas, "a.png")
 
     assert destino.name == "a_2.png"

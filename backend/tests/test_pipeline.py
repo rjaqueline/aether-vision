@@ -24,6 +24,11 @@ def _criar_imagem(caminho: Path, largura: int, altura: int, cor=(120, 60, 200)) 
     Image.new("RGB", (largura, altura), cor).save(caminho)
 
 
+def _pasta_saida(pasta_base: Path) -> Path:
+    """Localiza a pasta de saída (com timestamp) criada por um processar_pasta anterior em pasta_base."""
+    return next(pasta_base.glob(f"{config.PREFIXO_PASTA_SAIDA}_*"))
+
+
 def _rosto_valido(x=200, y=150, largura=200, altura=250) -> Rosto:
     centro_x = x + largura / 2
     return Rosto(
@@ -57,7 +62,7 @@ def test_nenhum_rosto_vai_para_revisar(tmp_path: Path):
     resultado = resultados[0]
     assert resultado.status == Status.REVISAR
     assert resultado.motivo == Motivo.NENHUM_ROSTO
-    saida = tmp_path / config.NOME_PASTA_SAIDA / config.NOME_PASTA_REVISAR / "empregado.png"
+    saida = _pasta_saida(tmp_path) / config.NOME_PASTA_REVISAR / "empregado.png"
     assert saida.exists()
     with Image.open(saida) as imagem:
         assert imagem.size == (config.LARGURA_FINAL, config.ALTURA_FINAL)
@@ -113,12 +118,7 @@ def test_rosto_valido_fora_de_3x4_e_aprovado_com_recorte_facial(tmp_path: Path, 
     assert resultado.status == Status.PRONTO
     assert resultado.motivo == Motivo.ROSTO_VALIDO_RECORTADO
 
-    saida = (
-        tmp_path
-        / config.NOME_PASTA_SAIDA
-        / config.NOME_PASTA_APROVADAS
-        / resultado.arquivo_saida
-    )
+    saida = _pasta_saida(tmp_path) / config.NOME_PASTA_APROVADAS / resultado.arquivo_saida
     with Image.open(saida) as imagem:
         assert imagem.size == (config.LARGURA_FINAL, config.ALTURA_FINAL)
 
@@ -152,7 +152,7 @@ def test_pdf_com_imagem_embutida_vira_item_com_pagina_na_origem(tmp_path: Path, 
     assert resultado.arquivo_original == "formulario.pdf"
     assert resultado.origem == "página 1 (imagem embutida)"
     assert resultado.arquivo_saida == "formulario_pagina_01.png"
-    saida = tmp_path / config.NOME_PASTA_SAIDA / config.NOME_PASTA_APROVADAS / resultado.arquivo_saida
+    saida = _pasta_saida(tmp_path) / config.NOME_PASTA_APROVADAS / resultado.arquivo_saida
     assert saida.exists()
     with Image.open(saida) as imagem:
         assert imagem.size == (config.LARGURA_FINAL, config.ALTURA_FINAL)
@@ -287,12 +287,7 @@ def test_falha_ao_gerar_debug_nao_invalida_resultado_ja_salvo(tmp_path: Path, mo
     assert resultado.motivo == Motivo.ROSTO_VALIDO_RECORTADO
     assert "debug" in resultado.detalhe.lower()
 
-    saida = (
-        tmp_path
-        / config.NOME_PASTA_SAIDA
-        / config.NOME_PASTA_APROVADAS
-        / resultado.arquivo_saida
-    )
+    saida = _pasta_saida(tmp_path) / config.NOME_PASTA_APROVADAS / resultado.arquivo_saida
     assert saida.exists()
 
 

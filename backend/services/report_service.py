@@ -7,12 +7,16 @@ from backend import config
 from backend.schemas.resultado import ResultadoItem
 
 
-def gerar_relatorio(pasta_base: Path, resultados: list[ResultadoItem]) -> Path:
-    """Escreve o relatório CSV em Vision_Processadas e retorna o caminho gerado.
+def gerar_relatorio(pasta_saida: Path, resultados: list[ResultadoItem]) -> Path:
+    """Escreve o relatório CSV dentro de pasta_saida e retorna o caminho gerado.
+
+    pasta_saida é a pasta já resolvida (com timestamp, ver
+    storage.nome_pasta_saida) usada pelo mesmo processamento — não a pasta
+    base de entrada.
 
     Separador ; e encoding utf-8-sig para abrir corretamente no Excel em pt-BR.
     """
-    caminho_relatorio = pasta_base / config.NOME_PASTA_SAIDA / config.NOME_RELATORIO
+    caminho_relatorio = pasta_saida / config.NOME_RELATORIO
     with caminho_relatorio.open("w", newline="", encoding="utf-8-sig") as arquivo:
         escritor = csv.writer(arquivo, delimiter=";")
         escritor.writerow(ResultadoItem.cabecalho_csv())

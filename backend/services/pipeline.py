@@ -49,6 +49,7 @@ _MOTIVO_POR_QUALIDADE = {
 def processar_pasta(
     pasta_base: Path,
     on_item_processado: _CallbackProgresso | None = None,
+    pasta_saida: Path | None = None,
 ) -> list[ResultadoItem]:
     """Processa todas as imagens e PDFs elegíveis de pasta_base e retorna os resultados.
 
@@ -62,8 +63,15 @@ def processar_pasta(
     o lote — o que esta função evita. numero_pagina (1-based, None fora de
     PDF) é a chave estável para quem chama correlacionar o resultado a algo
     pré-registrado antes do processamento começar.
+
+    pasta_saida é opcional: se omitida, é criada agora mesmo com
+    storage.nome_pasta_saida(). Quem chama e precisa saber o caminho de
+    antemão (ex.: sessao_service, para o callback de progresso; cli, para o
+    relatório) deve calculá-lo antes e passar aqui, garantindo que seja
+    exatamente a mesma pasta usada nos dois lugares.
     """
-    aprovadas, revisar, debug = storage.preparar_saida(pasta_base)
+    pasta_saida = pasta_saida or (pasta_base / storage.nome_pasta_saida())
+    aprovadas, revisar, debug = storage.preparar_saida(pasta_saida)
     entradas = storage.listar_entradas(pasta_base)
     total_arquivos = len(entradas)
 

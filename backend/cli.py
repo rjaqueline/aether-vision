@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from backend.schemas.resultado import ResultadoItem, Status
-from backend.services import pipeline, report_service
+from backend.services import pipeline, report_service, storage
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -25,15 +25,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Erro: pasta não encontrada: {pasta_base}")
         return 1
 
-    resultados = pipeline.processar_pasta(pasta_base)
-    caminho_relatorio = report_service.gerar_relatorio(pasta_base, resultados)
+    pasta_saida = pasta_base / storage.nome_pasta_saida()
+    resultados = pipeline.processar_pasta(pasta_base, pasta_saida=pasta_saida)
+    caminho_relatorio = report_service.gerar_relatorio(pasta_saida, resultados)
 
-    _imprimir_resumo(resultados, caminho_relatorio)
+    _imprimir_resumo(resultados, pasta_saida, caminho_relatorio)
     return 0
 
 
-def _imprimir_resumo(resultados: list[ResultadoItem], caminho_relatorio: Path) -> None:
-    """Imprime a contagem por status e o caminho do relatório gerado."""
+def _imprimir_resumo(resultados: list[ResultadoItem], pasta_saida: Path, caminho_relatorio: Path) -> None:
+    """Imprime a contagem por status e os caminhos de saída/relatório gerados."""
     total = len(resultados)
     prontos = sum(1 for r in resultados if r.status == Status.PRONTO)
     revisar = sum(1 for r in resultados if r.status == Status.REVISAR)
@@ -43,6 +44,7 @@ def _imprimir_resumo(resultados: list[ResultadoItem], caminho_relatorio: Path) -
     print(f"  Aprovadas direto: {prontos}")
     print(f"  Para revisar:     {revisar}")
     print(f"  Erros:            {erros}")
+    print(f"Pasta de saída: {pasta_saida}")
     print(f"Relatório: {caminho_relatorio}")
 
 

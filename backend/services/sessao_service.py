@@ -83,6 +83,7 @@ class Sessao:
     id: str
     pasta: Path
     estado: EstadoSessao = EstadoSessao.AGUARDANDO
+    pasta_saida: Path | None = None  # definida em processar_em_background, ver storage.nome_pasta_saida
     itens: list[ItemSessao] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -210,7 +211,8 @@ def processar_em_background(sessao_id: str) -> None:
     if sessao is None:
         return
 
-    pasta_saida = sessao.pasta / config.NOME_PASTA_SAIDA
+    pasta_saida = sessao.pasta / storage.nome_pasta_saida()
+    sessao.pasta_saida = pasta_saida
     with sessao.lock:
         por_chave = {_chave_item(item): item for item in sessao.itens}
 
@@ -241,8 +243,8 @@ def processar_em_background(sessao_id: str) -> None:
             alvo.aplicar_resultado(item, pasta_saida)
 
     try:
-        resultados = pipeline.processar_pasta(sessao.pasta, on_item_processado=on_item)
-        report_service.gerar_relatorio(sessao.pasta, resultados)
+        resultados = pipeline.processar_pasta(sessao.pasta, on_item_processado=on_item, pasta_saida=pasta_saida)
+        report_service.gerar_relatorio(pasta_saida, resultados)
     except Exception:
         _logger.exception("Falha ao processar a sessão %s", sessao_id)
     finally:

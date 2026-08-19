@@ -70,3 +70,29 @@ class ExportarResposta(BaseModel):
 
     pasta_saida: str
     relatorio: str
+
+
+class PastaSugerida(BaseModel):
+    """Um atalho de pasta do usuário atual (ver GET /pastas-sugeridas)."""
+
+    nome: str
+    caminho: str
+
+
+class PastasSugeridasResposta(BaseModel):
+    """Resposta de GET /pastas-sugeridas — só inclui atalhos que existem no disco."""
+
+    pastas: list[PastaSugerida]
+
+
+class ValidarPastaRequest(BaseModel):
+    """Corpo de POST /validar-pasta."""
+
+    caminho: str = Field(..., min_length=1)
+
+
+class ValidarPastaResposta(BaseModel):
+    """Resposta de POST /validar-pasta."""
+
+    valida: bool
+    mensagem: str = ""

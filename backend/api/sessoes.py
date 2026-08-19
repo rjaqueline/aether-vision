@@ -19,12 +19,16 @@ from backend.schemas.sessao import (
     ExportarResposta,
     ItemStatusResposta,
     ItemUploadResposta,
+    PastaSugerida,
+    PastasSugeridasResposta,
     ProcessarResposta,
     SessaoCriadaResposta,
     SessaoStatusResposta,
     UploadResposta,
+    ValidarPastaRequest,
+    ValidarPastaResposta,
 )
-from backend.services import sessao_service
+from backend.services import sessao_service, storage
 from backend.services.sessao_service import EstadoSessao, ItemSessao, Sessao
 
 router = APIRouter(tags=["sessao"])
@@ -143,26 +147,40 @@ def preview(sessao_id: str, item_id: str, versao: Literal["processada", "origina
 
 @router.post("/sessao/{sessao_id}/exportar", response_model=ExportarResposta)
 def exportar(sessao_id: str, corpo: ExportarRequest) -> ExportarResposta:
-    """Copia Vision_Processadas/ (aprovadas, revisar, debug, CSV) para a pasta escolhida pelo usuário."""
+    """Copia a pasta de saída da sessão (aprovadas, revisar, debug, CSV) para a pasta escolhida pelo usuário."""
     sessao = _obter_sessao_ou_404(sessao_id)
     if sessao.estado != EstadoSessao.CONCLUIDO:
         raise HTTPException(status_code=409, detail="Sessão ainda não foi processada")
 
     destino = Path(corpo.pasta_destino)
-    if not destino.is_dir():
-        raise HTTPException(status_code=400, detail=f"Pasta de destino não encontrada: {destino}")
+    valida, mensagem = storage.validar_pasta_destino(destino)
+    if not valida:
+        raise HTTPException(status_code=400, detail=mensagem)
 
-    origem = sessao.pasta / config.NOME_PASTA_SAIDA
-    if not origem.exists():
+    if sessao.pasta_saida is None or not sessao.pasta_saida.exists():
         raise HTTPException(status_code=500, detail="Sessão concluída sem pasta de saída — reprocesse")
 
-    destino_final = destino / config.NOME_PASTA_SAIDA
-    shutil.copytree(origem, destino_final, dirs_exist_ok=True)
+    destino_final = destino / sessao.pasta_saida.name
+    shutil.copytree(sessao.pasta_saida, destino_final, dirs_exist_ok=True)
 
     return ExportarResposta(
         pasta_saida=str(destino_final),
         relatorio=str(destino_final / config.NOME_RELATORIO),
     )
+
+
+@router.get("/pastas-sugeridas", response_model=PastasSugeridasResposta, tags=["pastas"])
+def pastas_sugeridas() -> PastasSugeridasResposta:
+    """Atalhos de pasta do usuário atual (Área de trabalho, Documentos, Downloads), para o modal de exportação."""
+    pastas = [PastaSugerida(nome=nome, caminho=str(caminho)) for nome, caminho in storage.pastas_sugeridas()]
+    return PastasSugeridasResposta(pastas=pastas)
+
+
+@router.post("/validar-pasta", response_model=ValidarPastaResposta, tags=["pastas"])
+def validar_pasta(corpo: ValidarPastaRequest) -> ValidarPastaResposta:
+    """Confirma que o caminho informado existe e aceita escrita, para feedback imediato no campo de destino."""
+    valida, mensagem = storage.validar_pasta_destino(Path(corpo.caminho))
+    return ValidarPastaResposta(valida=valida, mensagem=mensagem)
 
 
 @router.delete("/sessao/{sessao_id}", status_code=204)

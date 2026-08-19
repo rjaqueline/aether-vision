@@ -80,7 +80,12 @@ AREA_MINIMA_CANDIDATA_PDF = 10_000  # px²
 PROPORCAO_MINIMA_CANDIDATA_PDF = 0.4  # largura/altura
 PROPORCAO_MAXIMA_CANDIDATA_PDF = 1.6
 
-NOME_PASTA_SAIDA = "Vision_Processadas"
+# A pasta de saída leva um timestamp no nome (ver storage.nome_pasta_saida) —
+# PREFIXO_PASTA_SAIDA é só o prefixo fixo, nunca o nome completo da pasta.
+# Isso evita que lotes processados em momentos diferentes se misturem no
+# mesmo destino ao exportar.
+PREFIXO_PASTA_SAIDA = "Vision_Processadas"
+FORMATO_TIMESTAMP_PASTA_SAIDA = "%Y-%m-%d_%Hh%M"
 NOME_PASTA_APROVADAS = "aprovadas"
 NOME_PASTA_REVISAR = "revisar"
 NOME_PASTA_DEBUG = "debug"

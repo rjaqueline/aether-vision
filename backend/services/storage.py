@@ -1,13 +1,27 @@
-"""Operações de sistema de arquivos: descobrir entradas, preparar saída, evitar sobrescrita."""
+"""Operações de sistema de arquivos: descobrir entradas, preparar saída, evitar
+sobrescrita, sugerir/validar pasta de destino da exportação."""
 
+import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from backend import config
 
 
-def preparar_saida(pasta_base: Path) -> tuple[Path, Path, Path]:
-    """Cria (se preciso) as subpastas de saída e retorna (aprovadas, revisar, debug)."""
-    pasta_saida = pasta_base / config.NOME_PASTA_SAIDA
+def nome_pasta_saida(momento: datetime | None = None) -> str:
+    """Nome da pasta de saída para um processamento, com timestamp (ver config.PREFIXO_PASTA_SAIDA).
+
+    Calculado uma vez por processamento (não a cada chamada) por quem
+    orquestra o lote — pipeline.processar_pasta, sessao_service e cli —
+    para que a mesma pasta seja usada do início ao fim de um mesmo lote,
+    mesmo que o processamento atravesse a virada do minuto.
+    """
+    momento = momento or datetime.now()
+    return f"{config.PREFIXO_PASTA_SAIDA}_{momento.strftime(config.FORMATO_TIMESTAMP_PASTA_SAIDA)}"
+
+
+def preparar_saida(pasta_saida: Path) -> tuple[Path, Path, Path]:
+    """Cria (se preciso) as subpastas de saída dentro de pasta_saida e retorna (aprovadas, revisar, debug)."""
     aprovadas = pasta_saida / config.NOME_PASTA_APROVADAS
     revisar = pasta_saida / config.NOME_PASTA_REVISAR
     debug = pasta_saida / config.NOME_PASTA_DEBUG
@@ -18,13 +32,15 @@ def preparar_saida(pasta_base: Path) -> tuple[Path, Path, Path]:
 
 
 def listar_entradas(pasta_base: Path) -> list[Path]:
-    """Lista os arquivos de imagem e PDF elegíveis em pasta_base, ignorando a própria pasta de saída.
+    """Lista os arquivos de imagem e PDF elegíveis em pasta_base, ignorando pastas de saída.
 
-    Nunca varre subpastas: o Vision só deve tocar no que o usuário escolheu
-    explicitamente (ver config.VARRER_SUBPASTAS).
+    Ignora qualquer subpasta cujo nome comece com config.PREFIXO_PASTA_SAIDA —
+    não só a do processamento atual, mas também as de execuções anteriores
+    (cada uma leva um timestamp diferente no nome, ver nome_pasta_saida).
+    Nunca varre subpastas além disso: o Vision só deve tocar no que o usuário
+    escolheu explicitamente (ver config.VARRER_SUBPASTAS).
     """
     formatos_aceitos = config.FORMATOS_IMAGEM | config.FORMATOS_PDF
-    pasta_saida = (pasta_base / config.NOME_PASTA_SAIDA).resolve()
     candidatos = pasta_base.rglob("*") if config.VARRER_SUBPASTAS else pasta_base.glob("*")
 
     entradas = []
@@ -33,11 +49,48 @@ def listar_entradas(pasta_base: Path) -> list[Path]:
             continue
         if caminho.suffix.lower() not in formatos_aceitos:
             continue
-        caminho_resolvido = caminho.resolve()
-        if caminho_resolvido == pasta_saida or pasta_saida in caminho_resolvido.parents:
+        partes_intermediarias = caminho.relative_to(pasta_base).parts[:-1]
+        if any(parte.startswith(config.PREFIXO_PASTA_SAIDA) for parte in partes_intermediarias):
             continue
         entradas.append(caminho)
     return sorted(entradas)
+
+
+# Nome físico real da pasta no disco (não o rótulo traduzido que o Explorer
+# exibe) — desde o Windows Vista as pastas conhecidas ficam em inglês no
+# sistema de arquivos mesmo em instalações localizadas; só o desktop.ini
+# muda o que aparece na tela.
+_PASTAS_CONHECIDAS = [
+    ("Área de trabalho", "Desktop"),
+    ("Documentos", "Documents"),
+    ("Downloads", "Downloads"),
+]
+
+
+def pastas_sugeridas() -> list[tuple[str, Path]]:
+    """Atalhos de pasta do usuário atual (Área de trabalho, Documentos, Downloads) que existem no disco."""
+    home = Path.home()
+    return [(nome, home / pasta) for nome, pasta in _PASTAS_CONHECIDAS if (home / pasta).is_dir()]
+
+
+def validar_pasta_destino(caminho: Path) -> tuple[bool, str]:
+    """Confirma que caminho existe e aceita escrita; devolve (valida, mensagem — "" quando válida).
+
+    A checagem de escrita tenta de fato criar um arquivo temporário em vez de
+    inspecionar permissões (ex.: os.access): no Windows, ACLs e atributos de
+    pastas do sistema não são bem representados por uma checagem de bits, e
+    tentar escrever é o único jeito confiável de saber.
+    """
+    if not caminho.exists():
+        return False, "Pasta não encontrada."
+    if not caminho.is_dir():
+        return False, "O caminho informado não é uma pasta."
+    try:
+        with tempfile.NamedTemporaryFile(dir=caminho, delete=True):
+            pass
+    except OSError:
+        return False, "Sem permissão de escrita nesta pasta."
+    return True, ""
 
 
 def caminho_disponivel(pasta_destino: Path, nome_arquivo: str) -> Path:

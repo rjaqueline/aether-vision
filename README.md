@@ -7,18 +7,19 @@ Desenvolvido por Jaqueline Batista.
 
 ---
 
-## Situação atual: Etapa 1 concluída
+## Situação atual: Etapa 5 concluída
 
-O núcleo de imagem está pronto e testado, rodando por linha de comando.
-Ainda não há detecção facial, leitura de PDF, API nem interface.
+Backend (pipeline + API local) e frontend rodando juntos, tela única de
+upload → processamento → prévia → exportação. Ainda falta o painel de
+revisão manual e o empacotamento como executável Windows.
 
 | Etapa | O quê | Situação |
 |---|---|---|
 | 1 | Núcleo de imagem (proporção, redimensionamento, saída, CSV) | ✅ pronta |
-| 2 | Detecção facial e recorte cabeça + pescoço + ombros | ⬜ |
-| 3 | PDF: imagens embutidas e páginas escaneadas | ⬜ |
-| 4 | API FastAPI | ⬜ |
-| 5 | Frontend React + Vite | ⬜ |
+| 2 | Detecção facial e recorte cabeça + pescoço + ombros | ✅ pronta |
+| 3 | PDF: imagens embutidas e páginas escaneadas | ✅ pronta |
+| 4 | API FastAPI | ✅ pronta |
+| 5 | Frontend React + Vite | ✅ pronta |
 | 6 | Painel de revisão manual | ⬜ |
 | 7 | Empacotamento Windows (.exe) | ⬜ |
 
@@ -49,8 +50,26 @@ Importante rodar de dentro da pasta `vision/`, e com `-m`.
 pytest
 ```
 
-19 testes cobrindo proporção, redimensionamento, recorte, nomes únicos,
-não-varredura de subpastas e preservação dos originais.
+## Subindo backend + frontend juntos (Etapa 5)
+
+Dois processos, cada um no seu terminal, na raiz do projeto:
+
+```bash
+# terminal 1 — API (porta 8000)
+.venv\Scripts\activate
+uvicorn backend.main:app --reload
+
+# terminal 2 — frontend (porta 5173)
+cd frontend
+npm install   # só na primeira vez
+npm run dev
+```
+
+Abrir `http://localhost:5173`. O frontend já sabe conversar com a API em
+`http://127.0.0.1:8000` (CORS liberado para `localhost`/`127.0.0.1` em
+qualquer porta — ver `backend/main.py`); nenhuma configuração extra é
+necessária. Se a API não estiver no ar, a tela mostra um aviso claro em vez
+de falhar silenciosamente.
 
 ---
 
@@ -72,11 +91,24 @@ janela calculada a partir da posição real do rosto.
 ## Saída gerada
 
 ```
-Vision_Processadas/
+Vision_Processadas_AAAA-MM-DD_HHhMM/
 ├── aprovadas/
 ├── revisar/
+├── debug/
 └── relatorio_processamento.csv
 ```
+
+O nome da pasta leva a data e hora do processamento (ver
+`storage.nome_pasta_saida`), para que lotes processados em momentos
+diferentes não se misturem ao exportar para o mesmo destino.
+
+Ao exportar pelo frontend, o modal sugere Área de trabalho, Documentos e
+Downloads do usuário atual como atalhos de um clique (`GET
+/pastas-sugeridas`) e valida o caminho digitado em tempo real — existência e
+permissão de escrita (`POST /validar-pasta`). Esse fluxo de digitar/colar o
+caminho é provisório: será substituído pelo seletor de pasta nativo do
+sistema operacional na Etapa 7, junto do empacotamento como executável
+Windows.
 
 O CSV usa `;` como separador e UTF-8 com BOM, para abrir no Excel
 em português sem acento quebrado.
@@ -86,7 +118,7 @@ em português sem acento quebrado.
 - **Não varre subpastas.** O Vision olha só a pasta escolhida.
   Para mudar, alterar `VARRER_SUBPASTAS` em `backend/config.py`.
 - **Originais nunca são alterados.** Toda escrita acontece dentro de
-  `Vision_Processadas/`.
+  `Vision_Processadas_AAAA-MM-DD_HHhMM/`.
 - **Nada é sobrescrito.** Nomes repetidos ganham sufixo `_2`, `_3`...
 - **Todo número calibrável mora em `config.py`.** Nenhum valor mágico
   espalhado pelo código.
