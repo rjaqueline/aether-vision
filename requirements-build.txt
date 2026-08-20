@@ -1,0 +1,8 @@
+# Dependências usadas só para gerar o executável Windows (Etapa 7 — ver
+# scripts/build_exe.py e packaging/vision.spec). Quem apenas desenvolve não
+# precisa instalar este arquivo:
+#
+#   pip install -r requirements.txt -r requirements-build.txt
+#
+pyinstaller>=6.10.0
+pyinstaller-hooks-contrib>=2024.9

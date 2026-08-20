@@ -1,7 +1,7 @@
 """Operações de sistema de arquivos: descobrir entradas, preparar saída, evitar
 sobrescrita, sugerir/validar pasta de destino da exportação."""
 
-import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -74,22 +74,35 @@ def pastas_sugeridas() -> list[tuple[str, Path]]:
 
 
 def validar_pasta_destino(caminho: Path) -> tuple[bool, str]:
-    """Confirma que caminho existe e aceita escrita; devolve (valida, mensagem — "" quando válida).
+    """Confirma que caminho é absoluto, existe e aceita escrita; devolve (valida, mensagem — "" quando válida).
 
-    A checagem de escrita tenta de fato criar um arquivo temporário em vez de
-    inspecionar permissões (ex.: os.access): no Windows, ACLs e atributos de
-    pastas do sistema não são bem representados por uma checagem de bits, e
-    tentar escrever é o único jeito confiável de saber.
+    Chamada a cada digitação no campo de destino do frontend (debounced) e de
+    novo antes de exportar — por isso não pode ter efeito colateral surpresa:
+    exige caminho absoluto (um relativo resolveria contra o cwd do processo do
+    servidor, não contra algo previsível para quem digitou) e nunca cria a
+    pasta em si, só confirma que ela já existe.
+
+    A checagem de escrita tenta de fato criar um arquivo em vez de inspecionar
+    permissões (ex.: os.access): no Windows, ACLs e atributos de pastas do
+    sistema não são bem representados por uma checagem de bits, e tentar
+    escrever é o único jeito confiável de saber. O arquivo de teste usa nome
+    identificável (prefixo vision_write_test) e é sempre removido em finally,
+    mesmo se a escrita falhar no meio.
     """
+    if not caminho.is_absolute():
+        return False, "Informe um caminho absoluto."
     if not caminho.exists():
         return False, "Pasta não encontrada."
     if not caminho.is_dir():
         return False, "O caminho informado não é uma pasta."
+
+    arquivo_teste = caminho / f".vision_write_test_{uuid.uuid4().hex}"
     try:
-        with tempfile.NamedTemporaryFile(dir=caminho, delete=True):
-            pass
+        arquivo_teste.write_bytes(b"")
     except OSError:
         return False, "Sem permissão de escrita nesta pasta."
+    finally:
+        arquivo_teste.unlink(missing_ok=True)
     return True, ""
 
 

@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.test-tmp/
 Vision_Processadas_*/
+# Saída do empacotamento (Etapa 7 — ver scripts/build_exe.py e packaging/Vision.spec)
+/build/
+/dist/
 *.png
 *.jpg

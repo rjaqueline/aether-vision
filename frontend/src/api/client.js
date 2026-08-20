@@ -1,8 +1,12 @@
 import axios from "axios";
 
-// A API roda só localmente (ver backend/main.py) — porta fixa do uvicorn,
-// mas o host pode ser trocado via VITE_API_BASE_URL se necessário.
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+// A API roda só localmente (ver backend/main.py). Em dev (Vite), porta fixa
+// do uvicorn. Em build de produção (empacotado — Etapa 7), a mesma app
+// FastAPI serve o frontend, então a porta é dinâmica e a base fica vazia:
+// o axios resolve relativo à própria origem da página, que já é a API.
+// VITE_API_BASE_URL sobrepõe os dois casos, se necessário.
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://127.0.0.1:8000");
 
 const http = axios.create({ baseURL: API_BASE_URL });
 

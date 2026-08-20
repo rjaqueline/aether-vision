@@ -95,6 +95,35 @@ def test_caminho_disponivel_nao_altera_nome_livre(tmp_path: Path):
     assert destino.name == "foto.png"
 
 
+# --- validação de pasta destino --------------------------------------------
+
+
+def test_validar_pasta_destino_rejeita_caminho_relativo():
+    # caminho relativo resolveria contra o cwd do servidor, não contra algo
+    # previsível para quem digitou — precisa ser recusado sem tocar o disco
+    valida, mensagem = storage.validar_pasta_destino(Path(".test-tmp"))
+
+    assert valida is False
+    assert "absoluto" in mensagem.lower()
+
+
+def test_validar_pasta_destino_nao_cria_pasta_inexistente(tmp_path: Path):
+    pasta_inexistente = tmp_path / "nao_existe"
+
+    valida, mensagem = storage.validar_pasta_destino(pasta_inexistente)
+
+    assert valida is False
+    assert mensagem == "Pasta não encontrada."
+    assert not pasta_inexistente.exists()
+
+
+def test_validar_pasta_destino_aceita_pasta_existente_e_remove_temporario(tmp_path: Path):
+    valida, mensagem = storage.validar_pasta_destino(tmp_path)
+
+    assert (valida, mensagem) == (True, "")
+    assert list(tmp_path.iterdir()) == []
+
+
 # --- não-varredura de subpastas -------------------------------------------
 
 

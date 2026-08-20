@@ -6,11 +6,24 @@ import { obterPastasSugeridas, validarPasta } from "../api/client";
 // disparar uma requisição a cada tecla.
 const ATRASO_VALIDACAO_MS = 400;
 
+// No app empacotado (Etapa 7 — ver desktop/app.py), window.pywebview.api é
+// injetado pelo pywebview; no navegador (npm run dev) não existe, e o campo
+// de texto livre + validação debounced de sempre continuam intactos.
+function temSeletorNativo() {
+  return typeof window !== "undefined" && Boolean(window.pywebview?.api?.escolher_pasta_destino);
+}
+
 export default function ExportModal({ onExportar, onCancelar, exportando, erro }) {
   const [pasta, setPasta] = useState("");
   const [pastasSugeridas, setPastasSugeridas] = useState([]);
   const [validacao, setValidacao] = useState(null); // null = ainda não validado (campo vazio ou digitando)
   const timeoutRef = useRef(null);
+  const nativo = temSeletorNativo();
+
+  async function escolherPastaNativa() {
+    const escolhida = await window.pywebview.api.escolher_pasta_destino();
+    if (escolhida) setPasta(escolhida);
+  }
 
   useEffect(() => {
     obterPastasSugeridas()
@@ -61,12 +74,14 @@ export default function ExportModal({ onExportar, onCancelar, exportando, erro }
           <h3 className="text-lg font-semibold text-gray-900">Exportar fotos processadas</h3>
         </div>
         <p className="mt-2 text-sm text-gray-600">
-          Informe o caminho completo da pasta de destino no seu computador. Uma pasta com o nome
+          {nativo
+            ? "Escolha a pasta de destino no seu computador. Uma pasta com o nome"
+            : "Informe o caminho completo da pasta de destino no seu computador. Uma pasta com o nome"}{" "}
           Vision_Processadas_AAAA-MM-DD_HHhMM (data e hora do processamento) será criada dentro dela, com as
           fotos aprovadas, as que precisam de revisão e o relatório.
         </p>
 
-        {pastasSugeridas.length > 0 && (
+        {!nativo && pastasSugeridas.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
             {pastasSugeridas.map((sugestao) => (
               <button
@@ -81,25 +96,49 @@ export default function ExportModal({ onExportar, onCancelar, exportando, erro }
           </div>
         )}
 
-        <div className="relative mt-4">
-          <input
-            type="text"
-            value={pasta}
-            onChange={(e) => setPasta(e.target.value)}
-            placeholder="Ex.: C:\Users\SeuUsuario\Desktop\Fotos"
-            autoFocus
-            className={`w-full rounded-md border px-3 py-2 pr-9 text-sm focus:outline-none ${bordaClasse}`}
-          />
-          {validacao != null && (
-            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
-              {validacao.valida ? (
-                <CheckCircle2 className="text-green-600" size={18} />
-              ) : (
-                <XCircle className="text-red-600" size={18} />
-              )}
-            </span>
-          )}
-        </div>
+        {nativo ? (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={escolherPastaNativa}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <FolderOpen className="mr-2 inline" size={16} />
+              {pasta ? "Trocar pasta…" : "Escolher pasta…"}
+            </button>
+            {pasta && (
+              <p className="mt-2 flex items-center gap-1.5 break-all text-sm text-gray-700">
+                {validacao != null &&
+                  (validacao.valida ? (
+                    <CheckCircle2 className="shrink-0 text-green-600" size={16} />
+                  ) : (
+                    <XCircle className="shrink-0 text-red-600" size={16} />
+                  ))}
+                {pasta}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="relative mt-4">
+            <input
+              type="text"
+              value={pasta}
+              onChange={(e) => setPasta(e.target.value)}
+              placeholder="Ex.: C:\Users\SeuUsuario\Desktop\Fotos"
+              autoFocus
+              className={`w-full rounded-md border px-3 py-2 pr-9 text-sm focus:outline-none ${bordaClasse}`}
+            />
+            {validacao != null && (
+              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
+                {validacao.valida ? (
+                  <CheckCircle2 className="text-green-600" size={18} />
+                ) : (
+                  <XCircle className="text-red-600" size={18} />
+                )}
+              </span>
+            )}
+          </div>
+        )}
         {invalida && <p className="mt-1 text-sm text-red-600">{validacao.mensagem}</p>}
 
         {erro && <p className="mt-2 text-sm text-red-600">{erro}</p>}

@@ -4,7 +4,24 @@ Todo número calibrável do pipeline mora aqui — nenhum valor mágico deve
 aparecer espalhado pelos outros módulos.
 """
 
+import sys
 from pathlib import Path
+
+
+def _base_dir() -> Path:
+    """Pasta base para localizar arquivos de dados empacotados (ver CAMINHO_MODELO_YUNET).
+
+    Sob PyInstaller, backend/config.py é compilado para dentro do executável —
+    __file__ deixa de apontar para um caminho real em disco. sys._MEIPASS é a
+    pasta onde o PyInstaller extrai/expõe os arquivos declarados como `datas`
+    (tanto em onefile quanto em onedir — ver packaging/vision.spec), então é
+    ela que vale quando o app está congelado; em dev/CLI, o comportamento
+    original (__file__) é preservado.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent
+
 
 LARGURA_FINAL = 200
 # 200 / PROPORCAO_ALVO (3/4) = 266,67 — arredondado para 267 porque a saída
@@ -48,7 +65,7 @@ FATOR_MARGEM_TOPO = 0.40
 
 # --- detecção facial (YuNet) ----------------------------------------------
 
-CAMINHO_MODELO_YUNET = Path(__file__).resolve().parent / "models" / "face_detection_yunet_2023mar.onnx"
+CAMINHO_MODELO_YUNET = _base_dir() / "models" / "face_detection_yunet_2023mar.onnx"
 CONFIANCA_MINIMA_ROSTO = 0.75  # score_threshold do YuNet: abaixo disso a detecção é descartada
 NMS_LIMIAR_IOU = 0.3  # nms_threshold do YuNet: funde caixas sobrepostas do mesmo rosto
 TOP_K_ROSTOS = 5000  # número máximo de candidatos considerados pelo YuNet antes do NMS
